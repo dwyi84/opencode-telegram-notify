@@ -125,7 +125,6 @@ function raceTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
 type SessionClient = {
   session: {
     messages: (o: { path: { id: string } }) => Promise<unknown>
-    get: (o: { path: { id: string } }) => Promise<unknown>
   }
 }
 
@@ -159,24 +158,6 @@ async function lastTurnDuration(
     }
     const ms = (end ?? Date.now()) - start
     return ms >= 0 ? ms : null
-  } catch {
-    return null
-  }
-}
-
-async function sessionName(
-  client: unknown,
-  sessionID: string,
-): Promise<string | null> {
-  try {
-    const res = await raceTimeout(
-      (client as SessionClient).session.get({ path: { id: sessionID } }),
-      API_TIMEOUT_MS,
-    )
-    const info =
-      (res as { data?: { slug?: string; title?: string } }).data ??
-      (res as { slug?: string; title?: string })
-    return info?.slug ?? info?.title ?? null
   } catch {
     return null
   }
@@ -288,15 +269,11 @@ export const TelegramNotifyPlugin: Plugin = async (
 
     if (currentTheme() === "linux") {
       const word = custom ?? status.short
-      const [name, ms] = await Promise.all([
+      const ms =
         sessionID && client
-          ? sessionName(client, sessionID)
-          : Promise.resolve(null),
-        sessionID && client
-          ? lastTurnDuration(client, sessionID)
-          : Promise.resolve(null),
-      ])
-      const who = `${name ?? (sessionID ? sessionID.slice(-6) : "unknown")}@${truncate(project, 8)}`
+          ? await lastTurnDuration(client, sessionID)
+          : null
+      const who = `${sessionID ? sessionID.slice(-6) : "unknown"}@${truncate(project, 8)}`
       const prefix = custom ? "" : `${status.icon} `
       const dur = ms !== null ? ` (${Math.max(0, Math.round(ms / 1000))}s)` : ""
       const head = `${prefix}${esc(toSmallCaps(who))} ${esc(toSmallCaps(word))}${esc(toSmallCaps(dur))}`

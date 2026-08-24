@@ -20,6 +20,7 @@ export interface TelegramNotifyOptions {
 
 const THROTTLE_MS = 1500
 const MAX_ERROR_CHARS = 200
+const DURATION_TIMEOUT_MS = 3000
 
 type MsgInfo = { role: string; time: { created: number; completed?: number } }
 type MsgEntry = { info: MsgInfo }
@@ -42,18 +43,31 @@ function fmtDuration(ms: number): string {
   return `${h}h ${String(m % 60).padStart(2, "0")}m`
 }
 
+function raceTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  return Promise.race([
+    p,
+    new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), ms)
+    }),
+  ]).finally(() => clearTimeout(timer))
+}
+
 async function lastTurnDuration(
   client: unknown,
   sessionID: string,
 ): Promise<number | null> {
   try {
-    const res = await (
-      client as {
-        session: {
-          messages: (o: { path: { id: string } }) => Promise<unknown>
+    const res = await raceTimeout(
+      (
+        client as {
+          session: {
+            messages: (o: { path: { id: string } }) => Promise<unknown>
+          }
         }
-      }
-    ).session.messages({ path: { id: sessionID } })
+      ).session.messages({ path: { id: sessionID } }),
+      DURATION_TIMEOUT_MS,
+    )
     const list =
       (res as { data?: MsgEntry[] }).data ??
       (res as unknown as MsgEntry[])
@@ -92,15 +106,24 @@ export const TelegramNotifyPlugin: Plugin = async (
   const client = input.client
   const lastPlayed = new Map<string, number>()
 
-  if ((!token || !chatId) && client) {
-    void client.app.log({
-      body: {
-        service: "opencode-telegram-notify",
-        level: "warn",
-        message:
-          "botToken/chatId missing (set TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID); plugin disabled",
-      },
-    })
+  function log(level: "info" | "warn" | "error", message: string): void {
+    if (!client) return
+    void client.app
+      .log({
+        body: {
+          service: "opencode-telegram-notify",
+          level,
+          message,
+        },
+      })
+      .catch(() => {})
+  }
+
+  if (!token || !chatId) {
+    log(
+      "warn",
+      "botToken/chatId missing (set TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID); plugin disabled",
+    )
   }
 
   function send(text: string): void {
@@ -116,10 +139,18 @@ export const TelegramNotifyPlugin: Plugin = async (
       }),
       signal: AbortSignal.timeout(5000),
     })
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      .then(async (r) => {
+        if (!r.ok) {
+          const body = await r.text().catch(() => "")
+          log("error", `sendMessage failed: HTTP ${r.status} ${body.slice(0, 200)}`)
+        }
       })
-      .catch(() => {})
+      .catch((e: unknown) => {
+        log(
+          "error",
+          `sendMessage failed: ${e instanceof Error ? e.message : String(e)}`,
+        )
+      })
   }
 
   async function notify(
@@ -148,13 +179,17 @@ export const TelegramNotifyPlugin: Plugin = async (
         return
       const override = overrides[key]
       if (override === false) return
-      const now = Date.now()
-      if (now - (lastPlayed.get(key) ?? 0) < THROTTLE_MS) return
-      lastPlayed.set(key, now)
 
       const props = (
         event as unknown as { properties?: Record<string, unknown> }
       ).properties
+      const throttleKey = `${key}:${String(props?.sessionID ?? "")}`
+      const now = Date.now()
+      for (const [k, ts] of lastPlayed) {
+        if (now - ts >= THROTTLE_MS * 20) lastPlayed.delete(k)
+      }
+      if (now - (lastPlayed.get(throttleKey) ?? 0) < THROTTLE_MS) return
+      lastPlayed.set(throttleKey, now)
 
       if (key === "permission.updated") {
         await notify(

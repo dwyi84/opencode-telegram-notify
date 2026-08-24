@@ -130,13 +130,15 @@ Example with custom headers and a muted event:
 | 🆔 Session        | Last 6 characters of the session ID                           |
 | 🕐 Time           | Local time (24h)                                              |
 
-Duplicate notifications for the same event within 1.5s are throttled.
+Duplicate notifications for the same event and session within 1.5s are throttled.
 
 ## Troubleshooting
 
 | Symptom                          | Fix                                                                        |
 | -------------------------------- | -------------------------------------------------------------------------- |
 | No messages arrive               | Did you send "hi" to the bot once? Check token/chat ID; run opencode with the env vars set |
+| Intermittent messages            | Long-running processes (`opencode serve`, terminals opened before you exported the env vars) keep the old environment — restart them, or set `botToken`/`chatId` inline in the config |
+| Silent failures                  | Check the opencode log (`~/.local/share/opencode/log/opencode.log`) for `opencode-telegram-notify` entries — send errors are logged there |
 | `401 Unauthorized`               | Wrong bot token                                                             |
 | `400 chat not found`             | Wrong chat ID — re-check `getUpdates`                                       |
 | Group bot silent                 | `/setprivacy` → Disable in BotFather, resend a test message                 |

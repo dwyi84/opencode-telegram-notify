@@ -44,7 +44,7 @@ Events: `session.idle` (agent finished) → `done`, `session.error` → `error`,
 
 ## Themes
 
-**`linux`** (default) — one small-caps line: status box, `sessionID@project` (both abbreviated), status word, duration in seconds. Error messages and permission commands are printed on the next line.
+**`linux`** (default) — one small-caps line: status box, `sessionID@project` (both abbreviated — session ID 6 chars, project 20 chars), status word, duration in seconds. Error messages and permission commands are printed on the next line.
 
 ```
 🟩 ᴋx9ꜰ2ᴀ@ᴍʏ-ᴀᴘᴘ ᴅᴏɴᴇ (84s)

@@ -273,7 +273,7 @@ export const TelegramNotifyPlugin: Plugin = async (
         sessionID && client
           ? await lastTurnDuration(client, sessionID)
           : null
-      const who = `${sessionID ? sessionID.slice(-6) : "unknown"}@${truncate(project, 8)}`
+      const who = `${sessionID ? sessionID.slice(-6) : "unknown"}@${truncate(project, 20)}`
       const prefix = custom ? "" : `${status.icon} `
       const dur = ms !== null ? ` (${Math.max(0, Math.round(ms / 1000))}s)` : ""
       const head = `${prefix}${esc(toSmallCaps(who))} ${esc(toSmallCaps(word))}${esc(toSmallCaps(dur))}`

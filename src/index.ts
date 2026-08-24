@@ -519,8 +519,22 @@ export const TelegramNotifyPlugin: Plugin = async (
     } catch {}
   }
 
-  if (token && chatId && acquireLock()) {
-    void registerCommands().then(() => pollLoop())
+  async function pollLifecycle(): Promise<void> {
+    while (true) {
+      if (!acquireLock()) {
+        // another instance owns the (fresh) lock — retry until it goes away
+        await sleep(20_000)
+        continue
+      }
+      await registerCommands()
+      await pollLoop()
+      // lost ownership (owner restart race) — fall back to follower retry
+      await sleep(20_000)
+    }
+  }
+
+  if (token && chatId) {
+    void pollLifecycle()
   }
 
   return {

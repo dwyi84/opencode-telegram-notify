@@ -410,8 +410,26 @@ export const TelegramNotifyPlugin: Plugin = async (
     }
   }
 
+  async function registerCommands(): Promise<void> {
+    try {
+      await fetch(`https://api.telegram.org/bot${token}/setMyCommands`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          commands: [
+            {
+              command: "theme",
+              description: "Switch notification theme (linux | basic)",
+            },
+          ],
+        }),
+        signal: AbortSignal.timeout(5000),
+      })
+    } catch {}
+  }
+
   if (token && chatId && acquireLock()) {
-    void pollLoop()
+    void registerCommands().then(() => pollLoop())
   }
 
   return {

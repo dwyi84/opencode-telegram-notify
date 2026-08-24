@@ -71,10 +71,11 @@ Send `/theme` to your bot while opencode is running — it replies with clickabl
 
 ```
 ⏱ theme: linux
-[🟩 linux ✓] [🟧 basic]
+[linux ✓] [basic]
+[✕ close]
 ```
 
-Tap a button to switch instantly, or type `/theme linux` / `/theme basic` directly. The choice is saved to `~/.config/opencode/telegram-notify.json`, applies to all running opencode instances, and survives restarts. Works only while opencode is open somewhere (one instance polls for the command via a lock file). Don't share the bot token with another polling bot.
+Tap a button to switch instantly (✓ marks the current theme), or tap ✕ close to hide the buttons. You can also type `/theme linux` / `/theme basic` directly. The choice is saved to `~/.config/opencode/telegram-notify.json`, applies to all running opencode instances, and survives restarts. Works only while opencode is open somewhere (one instance polls for the command via a lock file). Don't share the bot token with another polling bot.
 
 ## Troubleshooting
 

@@ -364,14 +364,15 @@ export const TelegramNotifyPlugin: Plugin = async (
       inline_keyboard: [
         [
           {
-            text: cur === "linux" ? "🟩 linux ✓" : "🟩 linux",
+            text: cur === "linux" ? "linux ✓" : "linux",
             callback_data: "theme:linux",
           },
           {
-            text: cur === "basic" ? "🟧 basic ✓" : "🟧 basic",
+            text: cur === "basic" ? "basic ✓" : "basic",
             callback_data: "theme:basic",
           },
         ],
+        [{ text: "✕ close", callback_data: "theme:close" }],
       ],
     }
   }
@@ -423,6 +424,17 @@ export const TelegramNotifyPlugin: Plugin = async (
       const [ns, arg] = (cq.data ?? "").split(":")
       if (ns !== "theme") {
         await answerCallback(cq.id, "")
+        return
+      }
+      if (arg === "close") {
+        await answerCallback(cq.id, "")
+        if (cq.message?.message_id) {
+          api("editMessageReplyMarkup", {
+            chat_id: chatId,
+            message_id: cq.message.message_id,
+            reply_markup: { inline_keyboard: [] },
+          })
+        }
         return
       }
       const target = normalizeTheme(arg)

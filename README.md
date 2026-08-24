@@ -67,15 +67,14 @@ AI_APICallError: Upstream request failed
 
 ## Switching theme: `/theme`
 
-Send `/theme` to your bot while opencode is running:
+Send `/theme` to your bot while opencode is running — it replies with clickable buttons (✓ marks the current theme):
 
-| Command        | Effect                 |
-| -------------- | ---------------------- |
-| `/theme`       | Show the current theme |
-| `/theme linux` | Switch to linux        |
-| `/theme basic` | Switch to basic        |
+```
+⏱ theme: linux
+[🟩 linux ✓] [🟧 basic]
+```
 
-The choice is saved to `~/.config/opencode/telegram-notify.json`, applies to all running opencode instances, and survives restarts. Works only while opencode is open somewhere (one instance polls for the command via a lock file). Don't share the bot token with another polling bot.
+Tap a button to switch instantly, or type `/theme linux` / `/theme basic` directly. The choice is saved to `~/.config/opencode/telegram-notify.json`, applies to all running opencode instances, and survives restarts. Works only while opencode is open somewhere (one instance polls for the command via a lock file). Don't share the bot token with another polling bot.
 
 ## Troubleshooting
 

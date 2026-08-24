@@ -240,17 +240,12 @@ export const TelegramNotifyPlugin: Plugin = async (
     )
   }
 
-  function send(text: string): void {
+  function api(method: string, payload: Record<string, unknown>): void {
     if (!token || !chatId) return
-    void fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    void fetch(`https://api.telegram.org/bot${token}/${method}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text,
-        parse_mode: "HTML",
-        disable_web_page_preview: true,
-      }),
+      body: JSON.stringify(payload),
       signal: AbortSignal.timeout(5000),
     })
       .then(async (r) => {
@@ -258,16 +253,26 @@ export const TelegramNotifyPlugin: Plugin = async (
           const body = await r.text().catch(() => "")
           log(
             "error",
-            `sendMessage failed: HTTP ${r.status} ${body.slice(0, 200)}`,
+            `${method} failed: HTTP ${r.status} ${body.slice(0, 200)}`,
           )
         }
       })
       .catch((e: unknown) => {
         log(
           "error",
-          `sendMessage failed: ${e instanceof Error ? e.message : String(e)}`,
+          `${method} failed: ${e instanceof Error ? e.message : String(e)}`,
         )
       })
+  }
+
+  function send(text: string, replyMarkup?: unknown): void {
+    api("sendMessage", {
+      chat_id: chatId,
+      text,
+      parse_mode: "HTML",
+      disable_web_page_preview: true,
+      ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+    })
   }
 
   async function notify(
@@ -351,21 +356,102 @@ export const TelegramNotifyPlugin: Plugin = async (
     return lockOwned()
   }
 
+  function themeKeyboard(): {
+    inline_keyboard: Array<Array<{ text: string; callback_data: string }>>
+  } {
+    const cur = currentTheme()
+    return {
+      inline_keyboard: [
+        [
+          {
+            text: cur === "linux" ? "🟩 linux ✓" : "🟩 linux",
+            callback_data: "theme:linux",
+          },
+          {
+            text: cur === "basic" ? "🟧 basic ✓" : "🟧 basic",
+            callback_data: "theme:basic",
+          },
+        ],
+      ],
+    }
+  }
+
+  function answerCallback(id: string, text: string): Promise<void> {
+    return fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        callback_query_id: id,
+        ...(text ? { text } : {}),
+      }),
+      signal: AbortSignal.timeout(5000),
+    })
+      .then(async (r) => {
+        if (!r.ok) {
+          const body = await r.text().catch(() => "")
+          log(
+            "error",
+            `answerCallbackQuery failed: HTTP ${r.status} ${body.slice(0, 120)}`,
+          )
+        }
+      })
+      .catch((e: unknown) => {
+        log(
+          "error",
+          `answerCallbackQuery failed: ${e instanceof Error ? e.message : String(e)}`,
+        )
+      })
+  }
+
   async function handleUpdate(
     offsetRef: { value: number },
     u: {
       update_id: number
       message?: { text?: string; chat?: { id?: number } }
+      callback_query?: {
+        id: string
+        data?: string
+        message?: { message_id: number; chat?: { id?: number } }
+      }
     },
   ): Promise<void> {
     offsetRef.value = Math.max(offsetRef.value, u.update_id + 1)
+
+    const cq = u.callback_query
+    if (cq) {
+      if (String(cq.message?.chat?.id) !== chatId) return
+      const [ns, arg] = (cq.data ?? "").split(":")
+      if (ns !== "theme") {
+        await answerCallback(cq.id, "")
+        return
+      }
+      const target = normalizeTheme(arg)
+      if (!target) {
+        await answerCallback(cq.id, "unknown theme")
+      } else if (target === currentTheme()) {
+        await answerCallback(cq.id, `already ${target}`)
+      } else if (writeThemeFile(target)) {
+        await answerCallback(cq.id, `theme set: ${target}`)
+      } else {
+        await answerCallback(cq.id, "failed to write state file")
+      }
+      if (cq.message?.message_id) {
+        api("editMessageReplyMarkup", {
+          chat_id: chatId,
+          message_id: cq.message.message_id,
+          reply_markup: themeKeyboard(),
+        })
+      }
+      return
+    }
+
     const msg = u.message
     if (!msg?.text || String(msg.chat?.id) !== chatId) return
     const parts = msg.text.trim().split(/\s+/)
     if (parts[0].split("@")[0] !== "/theme") return
     const arg = normalizeTheme(parts[1])
     if (!arg) {
-      send(`⏱ theme: ${currentTheme()} — usage: /theme linux|basic`)
+      send(`⏱ theme: ${currentTheme()}`, themeKeyboard())
     } else if (arg === currentTheme()) {
       send(`⏱ theme: already ${arg}`)
     } else if (writeThemeFile(arg)) {
@@ -387,7 +473,7 @@ export const TelegramNotifyPlugin: Plugin = async (
           )
         } catch {}
         const r = await fetch(
-          `https://api.telegram.org/bot${token}/getUpdates?timeout=${POLL_TIMEOUT_SEC}&offset=${offsetRef.value}&allowed_updates=${encodeURIComponent('["message"]')}`,
+          `https://api.telegram.org/bot${token}/getUpdates?timeout=${POLL_TIMEOUT_SEC}&offset=${offsetRef.value}&allowed_updates=${encodeURIComponent('["message","callback_query"]')}`,
           { signal: AbortSignal.timeout(POLL_TIMEOUT_SEC * 1000 + 5000) },
         )
         const body = (await r.json()) as {
@@ -395,6 +481,11 @@ export const TelegramNotifyPlugin: Plugin = async (
           result?: Array<{
             update_id: number
             message?: { text?: string; chat?: { id?: number } }
+            callback_query?: {
+              id: string
+              data?: string
+              message?: { message_id: number; chat?: { id?: number } }
+            }
           }>
         }
         if (!body?.ok || !Array.isArray(body.result)) {

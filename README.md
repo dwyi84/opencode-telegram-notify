@@ -3,7 +3,7 @@
 Telegram notifications for [opencode](https://opencode.ai) — task completion, errors, and permission requests.
 
 ```
-🟩 ᴋx9ꜰ2ᴀ@ᴍʏ-ᴀᴘᴘ ᴅᴏɴᴇ (84s)
+🟩 ᴋx9ꜰ2ᴀ@ᴍʏ-ᴀᴘᴘ ᴅᴏɴᴇ (1m 24s)
 ```
 
 Zero npm dependencies, plain `fetch`. Send failures are logged to the opencode log instead of crashing your session.
@@ -44,10 +44,10 @@ Events: `session.idle` (agent finished) → `done`, `session.error` → `error`,
 
 ## Themes
 
-**`linux`** (default) — one small-caps line: status box, `sessionID@project` (both abbreviated — session ID 6 chars, project 20 chars), status word, duration in seconds. Error messages and permission commands are printed on the next line.
+**`linux`** (default) — one small-caps line: status box, `sessionID@project` (both abbreviated — session ID 6 chars, project 20 chars), status word, duration. Error messages and permission commands are printed on the next line.
 
 ```
-🟩 ᴋx9ꜰ2ᴀ@ᴍʏ-ᴀᴘᴘ ᴅᴏɴᴇ (84s)
+🟩 ᴋx9ꜰ2ᴀ@ᴍʏ-ᴀᴘᴘ ᴅᴏɴᴇ (1m 24s)
 🟥 ᴋx9ꜰ2ᴀ@ᴍʏ-ᴀᴘᴘ ᴇʀʀᴏʀ (12s)
 AI_APICallError: Upstream request failed
 ```

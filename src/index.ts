@@ -72,11 +72,14 @@ function truncate(t: string, max: number): string {
 
 function fmtDuration(ms: number): string {
   const s = Math.max(0, Math.round(ms / 1000))
-  if (s < 60) return `${s}s`
-  const m = Math.floor(s / 60)
-  if (m < 60) return `${m}m ${String(s % 60).padStart(2, "0")}s`
-  const h = Math.floor(m / 60)
-  return `${h}h ${String(m % 60).padStart(2, "0")}m`
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  const rs = s % 60
+  const parts: string[] = []
+  if (h > 0) parts.push(`${h}h`)
+  if (m > 0) parts.push(`${m}m`)
+  if (rs > 0 || parts.length === 0) parts.push(`${rs}s`)
+  return parts.join(" ")
 }
 
 const SMALL_CAPS: Record<string, string> = {
@@ -275,7 +278,7 @@ export const TelegramNotifyPlugin: Plugin = async (
           : null
       const who = `${sessionID ? sessionID.slice(-6) : "unknown"}@${truncate(project, 20)}`
       const prefix = custom ? "" : `${status.icon} `
-      const dur = ms !== null ? ` (${Math.max(0, Math.round(ms / 1000))}s)` : ""
+      const dur = ms !== null ? ` (${fmtDuration(ms)})` : ""
       const head = `${prefix}${esc(toSmallCaps(who))} ${esc(toSmallCaps(word))}${esc(toSmallCaps(dur))}`
       const extra = detail.error ?? detail.title
       send(

@@ -531,7 +531,10 @@ export const TelegramNotifyPlugin: Plugin = async (
 
   return {
     event: async ({ event }) => {
-      const key = event.type
+      const raw = String(event.type)
+      // opencode >= 1.18.2x renamed permission.updated -> permission.asked
+      const key: TelegramNotifyEvent =
+        raw === "permission.asked" ? "permission.updated" : (raw as TelegramNotifyEvent)
       if (
         key !== "session.idle" &&
         key !== "session.error" &&
@@ -553,9 +556,15 @@ export const TelegramNotifyPlugin: Plugin = async (
       lastPlayed.set(throttleKey, now)
 
       if (key === "permission.updated") {
+        const meta = (props?.metadata ?? {}) as Record<string, unknown>
+        const kind = props?.permission ?? props?.type
+        const fallbackTitle = Array.isArray(props?.patterns)
+          ? (props?.patterns as string[])[0]
+          : undefined
+        const title = meta.title ?? meta.command ?? props?.title ?? fallbackTitle
         await notify(key, props?.sessionID as string | undefined, {
-          type: props?.type ? String(props.type) : undefined,
-          title: props?.title ? String(props.title) : undefined,
+          type: kind != null ? String(kind) : undefined,
+          title: title != null ? String(title) : undefined,
         })
         return
       }

@@ -1,5 +1,10 @@
 # opencode-telegram-notify
 
+![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=flat&logo=typescript&logoColor=white)
+![Node.js](https://img.shields.io/badge/Node.js-339933?style=flat&logo=node.js&logoColor=white)
+![opencode](https://img.shields.io/badge/opencode-000000?style=flat&logo=opencode&logoColor=white)
+![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+
 Telegram notifications for [opencode](https://opencode.ai) — task completion, errors, and permission requests.
 
 ```

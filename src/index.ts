@@ -1,7 +1,10 @@
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import type { Plugin } from "@opencode-ai/plugin"
+import type { Plugin as V1Plugin } from "@opencode-ai/plugin"
+// `@opencode/plugin` re-exports its API as a namespace: `Plugin.Plugin`,
+// `Plugin.Context`. Only types are imported so the build emits no runtime import.
+import type { Plugin as OpenCodePlugin } from "@opencode/plugin"
 
 export type TelegramNotifyEvent =
   | "session.idle"
@@ -42,7 +45,13 @@ const POLL_TIMEOUT_SEC = 10
 const LOCK_STALE_MS = 30_000
 
 type MsgInfo = { role: string; time: { created: number; completed?: number } }
-type MsgEntry = { info: MsgInfo }
+// V1 `session.messages` wraps each entry in `info`; V2 `session.context` returns
+// entries flat (`type`/`time`), so both shapes are read.
+type MsgEntry = {
+  info?: MsgInfo
+  type?: string
+  time?: { created?: number; completed?: number }
+}
 
 const STATUS: Record<
   TelegramNotifyEvent,
@@ -125,35 +134,33 @@ function raceTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
   ]).finally(() => clearTimeout(timer))
 }
 
-type SessionClient = {
-  session: {
-    messages: (o: { path: { id: string } }) => Promise<unknown>
-  }
-}
+const msgRole = (m: MsgEntry | undefined): string | undefined =>
+  m?.info?.role ?? m?.type
+const msgCreated = (m: MsgEntry | undefined): number | undefined =>
+  m?.info?.time?.created ?? m?.time?.created
+const msgCompleted = (m: MsgEntry | undefined): number | undefined =>
+  m?.info?.time?.completed ?? m?.time?.completed
 
 async function lastTurnDuration(
-  client: unknown,
+  getMessages: (id: string) => Promise<unknown>,
   sessionID: string,
 ): Promise<number | null> {
   try {
-    const res = await raceTimeout(
-      (client as SessionClient).session.messages({ path: { id: sessionID } }),
-      API_TIMEOUT_MS,
-    )
+    const res = await raceTimeout(getMessages(sessionID), API_TIMEOUT_MS)
     const list =
       (res as { data?: MsgEntry[] }).data ?? (res as unknown as MsgEntry[])
     if (!Array.isArray(list)) return null
     let start: number | undefined
     for (let i = list.length - 1; i >= 0; i--) {
-      if (list[i]?.info?.role === "user") {
-        start = list[i].info.time?.created
+      if (msgRole(list[i]) === "user") {
+        start = msgCreated(list[i])
         break
       }
     }
     if (!start) return null
     let end: number | undefined
     for (let i = list.length - 1; i >= 0; i--) {
-      const c = list[i]?.info?.time?.completed
+      const c = msgCompleted(list[i])
       if (c) {
         end = c
         break
@@ -188,34 +195,41 @@ function writeThemeFile(theme: TelegramNotifyTheme): boolean {
   }
 }
 
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
-
-export const TelegramNotifyPlugin: Plugin = async (
-  input,
-  options?: TelegramNotifyOptions,
-) => {
-  const token = options?.botToken ?? process.env.TELEGRAM_BOT_TOKEN
-  const chatId = options?.chatId ?? process.env.TELEGRAM_CHAT_ID
-  const configuredTheme = normalizeTheme(options?.theme)
+function createNotifier(
+  opts: TelegramNotifyOptions,
+  deps: {
+    project: string
+    getMessages: (id: string) => Promise<unknown>
+    log: (level: "info" | "warn" | "error", message: string) => void
+  },
+): { handleEvent: (event: unknown) => Promise<void>; dispose: () => void } {
+  const token = opts.botToken ?? process.env.TELEGRAM_BOT_TOKEN
+  const chatId = opts.chatId ?? process.env.TELEGRAM_CHAT_ID
+  const configuredTheme = normalizeTheme(opts.theme)
   const currentTheme = (): TelegramNotifyTheme =>
     readThemeFile() ?? configuredTheme ?? "linux"
-  const overrides = options?.events ?? {}
-  const project = basename(input.worktree ?? input.directory)
-  const client = input.client
+  const overrides = opts.events ?? {}
+  const project = deps.project
   const lastPlayed = new Map<string, number>()
+  const abort = new AbortController()
+  const log = deps.log
 
-  function log(level: "info" | "warn" | "error", message: string): void {
-    if (!client) return
-    void client.app
-      .log({
-        body: {
-          service: "opencode-telegram-notify",
-          level,
-          message,
+  const timeoutSignal = (ms: number): AbortSignal =>
+    AbortSignal.any([abort.signal, AbortSignal.timeout(ms)])
+
+  // Abortable sleep so dispose() stops the poll loop promptly (including waits).
+  const sleep = (ms: number): Promise<void> =>
+    new Promise((resolve) => {
+      const timer = setTimeout(resolve, ms)
+      abort.signal.addEventListener(
+        "abort",
+        () => {
+          clearTimeout(timer)
+          resolve()
         },
-      })
-      .catch(() => {})
-  }
+        { once: true },
+      )
+    })
 
   if (!token || !chatId) {
     log(
@@ -230,7 +244,7 @@ export const TelegramNotifyPlugin: Plugin = async (
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(5000),
+      signal: timeoutSignal(5000),
     })
       .then(async (r) => {
         if (!r.ok) {
@@ -242,6 +256,7 @@ export const TelegramNotifyPlugin: Plugin = async (
         }
       })
       .catch((e: unknown) => {
+        if (abort.signal.aborted) return
         log(
           "error",
           `${method} failed: ${e instanceof Error ? e.message : String(e)}`,
@@ -272,10 +287,9 @@ export const TelegramNotifyPlugin: Plugin = async (
 
     if (currentTheme() === "linux") {
       const word = custom ?? status.short
-      const ms =
-        sessionID && client
-          ? await lastTurnDuration(client, sessionID)
-          : null
+      const ms = sessionID
+        ? await lastTurnDuration(deps.getMessages, sessionID)
+        : null
       const who = `${sessionID ? sessionID.slice(-6) : "unknown"}@${truncate(project, 20)}`
       const prefix = custom ? "" : `${status.icon} `
       const dur = ms !== null ? ` (${fmtDuration(ms)})` : ""
@@ -291,8 +305,8 @@ export const TelegramNotifyPlugin: Plugin = async (
 
     const lines: string[] = [`<b>${esc(`${icon} [${label}]`.trim())}</b>`, ""]
     lines.push(`📁 Project: ${esc(project)}`)
-    if (sessionID && client) {
-      const ms = await lastTurnDuration(client, sessionID)
+    if (sessionID) {
+      const ms = await lastTurnDuration(deps.getMessages, sessionID)
       if (ms !== null) {
         const label2 = key === "permission.updated" ? "Elapsed" : "Duration"
         lines.push(`⏱ ${label2}: ${fmtDuration(ms)}`)
@@ -365,7 +379,7 @@ export const TelegramNotifyPlugin: Plugin = async (
         callback_query_id: id,
         ...(text ? { text } : {}),
       }),
-      signal: AbortSignal.timeout(5000),
+      signal: timeoutSignal(5000),
     })
       .then(async (r) => {
         if (!r.ok) {
@@ -377,6 +391,7 @@ export const TelegramNotifyPlugin: Plugin = async (
         }
       })
       .catch((e: unknown) => {
+        if (abort.signal.aborted) return
         log(
           "error",
           `answerCallbackQuery failed: ${e instanceof Error ? e.message : String(e)}`,
@@ -455,7 +470,7 @@ export const TelegramNotifyPlugin: Plugin = async (
 
   async function pollLoop(): Promise<void> {
     const offsetRef = { value: 0 }
-    while (lockOwned()) {
+    while (!abort.signal.aborted && lockOwned()) {
       try {
         try {
           mkdirSync(STATE_DIR, { recursive: true })
@@ -466,7 +481,7 @@ export const TelegramNotifyPlugin: Plugin = async (
         } catch {}
         const r = await fetch(
           `https://api.telegram.org/bot${token}/getUpdates?timeout=${POLL_TIMEOUT_SEC}&offset=${offsetRef.value}&allowed_updates=${encodeURIComponent('["message","callback_query"]')}`,
-          { signal: AbortSignal.timeout(POLL_TIMEOUT_SEC * 1000 + 5000) },
+          { signal: timeoutSignal(POLL_TIMEOUT_SEC * 1000 + 5000) },
         )
         const body = (await r.json()) as {
           ok?: boolean
@@ -506,13 +521,13 @@ export const TelegramNotifyPlugin: Plugin = async (
             },
           ],
         }),
-        signal: AbortSignal.timeout(5000),
+        signal: timeoutSignal(5000),
       })
     } catch {}
   }
 
   async function pollLifecycle(): Promise<void> {
-    while (true) {
+    while (!abort.signal.aborted) {
       if (!acquireLock()) {
         // another instance owns the (fresh) lock — retry until it goes away
         await sleep(20_000)
@@ -529,58 +544,134 @@ export const TelegramNotifyPlugin: Plugin = async (
     void pollLifecycle()
   }
 
-  return {
-    event: async ({ event }) => {
-      const raw = String(event.type)
-      // opencode >= 1.18.2x renamed permission.updated -> permission.asked
-      const key: TelegramNotifyEvent =
-        raw === "permission.asked" ? "permission.updated" : (raw as TelegramNotifyEvent)
-      if (
-        key !== "session.idle" &&
-        key !== "session.error" &&
-        key !== "permission.updated"
-      )
-        return
-      const override = overrides[key]
-      if (override === false) return
+  async function handleEvent(event: unknown): Promise<void> {
+    const ev = event as {
+      type?: unknown
+      properties?: Record<string, unknown>
+      data?: Record<string, unknown>
+    }
+    const raw = String(ev.type)
+    // opencode >= 1.18.2x renamed permission.updated -> permission.asked.
+    // opencode v2 renamed session.error -> session.execution.failed /
+    // session.step.failed; both map onto the existing internal keys.
+    const key: TelegramNotifyEvent =
+      raw === "permission.asked"
+        ? "permission.updated"
+        : raw === "session.execution.failed" || raw === "session.step.failed"
+          ? "session.error"
+          : (raw as TelegramNotifyEvent)
+    if (
+      key !== "session.idle" &&
+      key !== "session.error" &&
+      key !== "permission.updated"
+    )
+      return
+    const override = overrides[key]
+    if (override === false) return
 
-      const props = (
-        event as unknown as { properties?: Record<string, unknown> }
-      ).properties
-      const throttleKey = `${key}:${String(props?.sessionID ?? "")}`
-      const now = Date.now()
-      for (const [k, ts] of lastPlayed) {
-        if (now - ts >= THROTTLE_MS * 20) lastPlayed.delete(k)
-      }
-      if (now - (lastPlayed.get(throttleKey) ?? 0) < THROTTLE_MS) return
-      lastPlayed.set(throttleKey, now)
+    // V1 events carry `properties`; V2 events carry `data`.
+    const props = ev.properties ?? ev.data
+    const throttleKey = `${key}:${String(props?.sessionID ?? "")}`
+    const now = Date.now()
+    for (const [k, ts] of lastPlayed) {
+      if (now - ts >= THROTTLE_MS * 20) lastPlayed.delete(k)
+    }
+    if (now - (lastPlayed.get(throttleKey) ?? 0) < THROTTLE_MS) return
+    lastPlayed.set(throttleKey, now)
 
-      if (key === "permission.updated") {
-        const meta = (props?.metadata ?? {}) as Record<string, unknown>
-        const kind = props?.permission ?? props?.type
-        const fallbackTitle = Array.isArray(props?.patterns)
-          ? (props?.patterns as string[])[0]
+    if (key === "permission.updated") {
+      const meta = (props?.metadata ?? {}) as Record<string, unknown>
+      // V1: permission/type, V2: action
+      const kind = props?.permission ?? props?.action ?? props?.type
+      // V1: patterns, V2: resources
+      const fallbackTitle = Array.isArray(props?.patterns)
+        ? (props?.patterns as string[])[0]
+        : Array.isArray(props?.resources)
+          ? (props?.resources as string[])[0]
           : undefined
-        const title = meta.title ?? meta.command ?? props?.title ?? fallbackTitle
-        await notify(key, props?.sessionID as string | undefined, {
-          type: kind != null ? String(kind) : undefined,
-          title: title != null ? String(title) : undefined,
-        })
-        return
-      }
+      const title =
+        meta.title ??
+        meta.command ??
+        props?.title ??
+        props?.message ??
+        fallbackTitle
+      await notify(key, props?.sessionID as string | undefined, {
+        type: kind != null ? String(kind) : undefined,
+        title: title != null ? String(title) : undefined,
+      })
+      return
+    }
 
-      if (key === "session.error") {
-        const err = props?.error as { message?: string } | undefined
-        const msg = err?.message?.split("\n")[0].slice(0, MAX_ERROR_CHARS)
-        await notify(key, props?.sessionID as string | undefined, {
-          error: msg || undefined,
-        })
-        return
-      }
+    if (key === "session.error") {
+      const err = props?.error as
+        | { message?: string; data?: { message?: string } }
+        | undefined
+      const msg = (err?.data?.message ?? err?.message)
+        ?.split("\n")[0]
+        .slice(0, MAX_ERROR_CHARS)
+      await notify(key, props?.sessionID as string | undefined, {
+        error: msg || undefined,
+      })
+      return
+    }
 
-      await notify(key, props?.sessionID as string | undefined)
-    },
+    await notify(key, props?.sessionID as string | undefined)
   }
+
+  return { handleEvent, dispose: () => abort.abort() }
 }
 
-export default TelegramNotifyPlugin
+// opencode v2 ("opencode2") entrypoint: a default-exported definition with an
+// id and setup(ctx). setup subscribes to the public event stream and returns a
+// cleanup function that stops the subscription and the poll loop.
+const v2: OpenCodePlugin.Plugin = {
+  id: "opencode-telegram-notify",
+  setup(ctx: OpenCodePlugin.Context) {
+    const notifier = createNotifier(ctx.options as TelegramNotifyOptions, {
+      project: basename(ctx.location.directory),
+      getMessages: (id) => ctx.session.context({ sessionID: id }),
+      log: (level, msg) => {
+        const line = `[opencode-telegram-notify] ${level}: ${msg}`
+        if (level === "error") console.error(line)
+        else console.log(line)
+      },
+    })
+    const controller = new AbortController()
+    void (async () => {
+      for await (const event of ctx.event.subscribe({
+        signal: controller.signal,
+      })) {
+        await notifier.handleEvent(event)
+      }
+    })().catch(() => {})
+    return () => {
+      notifier.dispose()
+      controller.abort()
+    }
+  },
+}
+
+// opencode v1 entrypoint: a plugin function returning a hooks object.
+const v1: V1Plugin = async (input, options) => {
+  const notifier = createNotifier((options ?? {}) as TelegramNotifyOptions, {
+    project: basename(input.worktree ?? input.directory),
+    getMessages: (id) => input.client.session.messages({ path: { id } }),
+    log: (level, msg) => {
+      void input.client?.app
+        ?.log({
+          body: {
+            service: "opencode-telegram-notify",
+            level,
+            message: msg,
+          },
+        })
+        ?.catch(() => {})
+    },
+  })
+  return { event: async ({ event }) => notifier.handleEvent(event) }
+}
+
+// A package can expose both V1 and V2 from one default export: V1 calls
+// `server()`, V2 calls `setup()`. Supported by opencode >= 1.18.29.
+export const TelegramNotifyPlugin = v1
+export default { ...v2, server: v1 }

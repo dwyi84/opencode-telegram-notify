@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
   "name": "opencode-telegram-notify",
-  "version": "0.3.8",
+  "version": "0.4.0",
   "description": "Telegram notifications for opencode session events - completion, errors, and permission requests",
   "type": "module",
   "main": "./dist/index.js",
@@ -34,10 +34,20 @@
     "url": "git+ssh://git@github.com/dwyi84/opencode-telegram-notify.git"
   },
   "peerDependencies": {
-    "@opencode-ai/plugin": ">=1.0.0"
+    "@opencode-ai/plugin": ">=1.18.29",
+    "@opencode/plugin": ">=2.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@opencode-ai/plugin": {
+      "optional": true
+    },
+    "@opencode/plugin": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@opencode-ai/plugin": "^1.18.18",
+    "@opencode/plugin": "^2.0.27",
     "@types/bun": "^1.2.0",
     "typescript": "^5.9.0"
   }

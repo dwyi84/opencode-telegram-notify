@@ -17,22 +17,32 @@ Zero npm dependencies, plain `fetch`. Send failures are logged to the opencode l
 
 1. Create a bot with [@BotFather](https://t.me/BotFather) → copy the token
 2. Send any message to your bot once, then get your chat ID from `https://api.telegram.org/bot<TOKEN>/getUpdates`
-3. Add the plugin and credentials:
+3. Add the plugin and credentials.
 
-```json
+On OpenCode v2 (opencode2), add the plugin to your opencode config (`~/.config/opencode/opencode.jsonc`) using the `plugins` array:
+
+```jsonc
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": [
-    [
-      "opencode-telegram-notify",
-      {
+  "plugins": [
+    {
+      "package": "opencode-telegram-notify",
+      "options": {
         "botToken": "123456789:AAHfW3v...",
         "chatId": "123456789"
       }
-    ]
+    }
   ]
 }
 ```
+
+Or install it as a global package plugin:
+
+```sh
+opencode plugin add opencode-telegram-notify
+```
+
+> On OpenCode v1, use the `plugin` key with tuple form instead: `"plugin": [["opencode-telegram-notify", { "botToken": "...", "chatId": "..." }]]`. The same package supports both v1 and v2 (v1 object entrypoints require opencode `1.18.29`+).
 
 Or use env vars instead of inline credentials: `export TELEGRAM_BOT_TOKEN=...` and `export TELEGRAM_CHAT_ID=...` in your shell profile, then restart opencode.
 
